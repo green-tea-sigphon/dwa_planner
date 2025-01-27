@@ -8,6 +8,8 @@
 #include <cmath>
 #include <limits>
 
+long num_existed_markers = 0;
+
 namespace dwa_planner
 {
 
@@ -24,12 +26,12 @@ DWAPlannerNode::DWAPlannerNode()
 {
   // デフォルトパラメータ
 //   kinematic_ = {1.0, toRadian(20.0), 0.2, toRadian(50.0), 0.01, toRadian(1.0)};
-  kinematic_ = {0.5, toRadian(20.0), 0.1, toRadian(50.0), 0.01, toRadian(1.0)};
-  eval_param_ = {0.1, 0.1, 0.1, 3.0};
+  kinematic_ = {0.5, toRadian(20.0), 0.1, toRadian(50.0), 0.1, toRadian(10.0)};
+  eval_param_ = {0.3, 0.5, 0.1, 3.0};
 
   // Subscriber
   odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
-    "/odom", 10,
+    "odom", 10,
     std::bind(&DWAPlannerNode::odomCallback, this, std::placeholders::_1));
 
   local_obstacle_sub_ = create_subscription<visualization_msgs::msg::MarkerArray>(
@@ -121,8 +123,11 @@ void DWAPlannerNode::timerCallback()
   auto ep = DWA::DynamicWindowApproach_traject_end_points(
     x_, 
     kinematic_, 
-    eval_param_
-  );
+    goal_, 
+    eval_param_,
+    obstacle_, 
+    obstacle_radius_, 
+    robot_radius_);
   
   RCLCPP_INFO(get_logger(), "traject: (%.2f, %.2f)", u[0], u[1]);
 
@@ -132,11 +137,42 @@ void DWAPlannerNode::timerCallback()
   cmd_vel_pub_->publish(cmd);
 
   visualization_msgs::msg::MarkerArray eps;
-  int d = 0;
+  visualization_msgs::msg::MarkerArray eps_d;
+  long d = 0;
+  if(num_existed_markers != 0){
+    for(long i = 0; i< num_existed_markers; i++){
+      visualization_msgs::msg::Marker point_d;
+      point_d.header.frame_id = "map";
+      point_d.ns = "trajectory_point";
+      point_d.id = i;
+      point_d.action = visualization_msgs::msg::Marker::DELETE;
+      eps_d.markers.push_back(point_d);
+    }
+    num_existed_markers = 0;
+    trajectory_end_points_pub_->publish(eps_d);
+  }
+
   for(auto e : ep){
     visualization_msgs::msg::Marker point;
+    if(e[2] == 0.0){
+      point.scale.x = 0.1;
+      point.scale.y = 0.1;
+      point.scale.z = 0.1;
+      point.color.a = 1.0;
+      point.color.r = 1.0;
+      point.color.g = 1.0;
+      point.color.b = 1.0; 
+    }else{
+      point.scale.x = 0.2;
+      point.scale.y = 0.2;
+      point.scale.z = 0.2;
+      point.color.a = 1.0;
+      point.color.r = 1.0;
+      point.color.g = 0.0;
+      point.color.b = 1.0; 
+    }
     point.id = d;
-    point.header.frame_id = "base_link"; // フレームIDは適切なものを指定
+    point.header.frame_id = "map"; // フレームIDは適切なものを指定
     point.ns = "trajectory_point";
     point.type = visualization_msgs::msg::Marker::SPHERE;
     point.action = visualization_msgs::msg::Marker::ADD;
@@ -144,16 +180,10 @@ void DWAPlannerNode::timerCallback()
     point.pose.position.y = e[1];
     point.pose.position.z = 0.0;
     point.pose.orientation.w = 1.0;
-    point.scale.x = 0.1; // 球の大きさ
-    point.scale.y = 0.1;
-    point.scale.z = 0.1;
-    point.color.a = 1.0;
-    point.color.r = 1.0;
-    point.color.g = 1.0;
-    point.color.b = 1.0; 
     eps.markers.push_back(point);
     d++;
   }
+  num_existed_markers = d;
   trajectory_end_points_pub_->publish(eps);
 }
 

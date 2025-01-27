@@ -1,5 +1,6 @@
 #include <iostream>
 #include <string>
+#include <cmath>
 #include "dwa_planner/dwa_planner_component.hpp"
 #include "dwa_planner/dwa_planner_node.hpp"
 
@@ -48,35 +49,46 @@ std::vector<double> DWA::DynamicWindowApproach(
   return SelectBestControl(evalDB, evalParam);
 }
 
-std::vector<std::array<double,2>> DWA::DynamicWindowApproach_traject_end_points(
+std::vector<std::array<double,3>> DWA::DynamicWindowApproach_traject_end_points(
     const std::array<double,5> &x,
     const std::array<double,6> &model,
-    const std::array<double,4> &evalParam
+    const std::array<double,2> &goal,
+    const std::array<double,4> &evalParam,
+    const std::vector<std::array<double,2>> &ob,
+    double R,
+    double robotR
 )
 {
   auto Vr = CalcDynamicWindow(x, model);
-  std::vector<std::array<double,2>> end_points;
+  std::vector<std::array<double,3>> end_points;
+  std::vector<std::array<double,5>> evalDB;
   //end_points.push_back({x[0],x[1]});
   
   for (double vt = Vr[0]; vt <= Vr[1]; vt += model[4]) {
     for (double ot = Vr[2]; ot <= Vr[3]; ot += model[5]) {
       auto xt = GenerateTrajectory(x, vt, ot, evalParam[3]);
-      end_points.push_back({xt[0],xt[1]});
+      double heading = CalcHeadingEval(xt, goal);
+      double dist    = CalcDistEval(xt, ob, R, robotR);
+      double vel     = std::fabs(vt);
+      if(dist < 0.2) continue;
+
+      end_points.push_back({xt[0],xt[1],0.0});
+      evalDB.push_back({vt, ot, heading, dist, vel});
     }
   }
   if(end_points.empty()){
     std::cout << "No path to goal!" << std::endl;
-    end_points.push_back({0.0,0.0});
+    end_points.push_back({0.0,0.0,0.0});
     return end_points;
   }//*/
   //dwa_planner->trajectory_publisher(evalDB);
-  return end_points;
+  return SelectBest_end_point(evalDB,evalParam,end_points);
 }
 
 std::array<double,4> DWA::CalcDynamicWindow(const std::array<double,5> &x,
                                             const std::array<double,6> &model)
 {
-  double v_min = std::min(0.0, x[3] - model[2]*DT);
+  double v_min = std::max(0.1, std::abs(x[3] - model[2]*DT));
   double v_max = std::max(model[0], x[3] + model[2]*DT);
   double w_min = std::min(-model[1], x[4] - model[3]*DT);
   double w_max = std::max(model[1], x[4] + model[3]*DT);
@@ -112,7 +124,7 @@ double DWA::CalcDistEval(const std::array<double,5> &x,
                          double robotR)
 {
   //double min_dist = std::numeric_limits<double>::infinity();
-  double min_dist = 1000.0;
+  double min_dist = 10000.0;
   for(const auto &o : ob){
     double dist = std::hypot(o[0]-x[0], o[1]-x[1]) - (R+robotR);
     if(dist<min_dist){
@@ -163,6 +175,31 @@ std::vector<double> DWA::SelectBestControl(const std::vector<std::array<double,5
   }
   //std::cout<<"best[0]: "<<best_u[0]<<"\tbest[1]: "<<best_u[1]<<"\n";
   return best_u;
+}
+
+std::vector<std::array<double,3>> DWA::SelectBest_end_point(const std::vector<std::array<double,5>> &evalDB,
+                                           const std::array<double,4> &evalParam, const std::vector<std::array<double,3>> &end_points_list)
+{
+  auto result = end_points_list;
+  double max_score=-std::numeric_limits<double>::infinity();
+  int selected_index = -1;
+  int count = 0;
+  for(auto &e : evalDB){
+    double score = evalParam[0]* e[2] +
+                   evalParam[1]* e[3] +
+                   evalParam[2]* e[4];
+    if(score>max_score){
+      selected_index = count;
+      max_score = score;
+    }
+    count++;
+  }
+  if(selected_index != -1){
+    result[selected_index][2] = 1.0;
+    std::cout<<"Find traject.\n";
+  }
+  //std::cout<<"best[0]: "<<best_u[0]<<"\tbest[1]: "<<best_u[1]<<"\n";
+  return result;
 }
 
 } // namespace dwa_planner
